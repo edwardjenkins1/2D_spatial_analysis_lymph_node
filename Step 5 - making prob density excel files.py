@@ -1,109 +1,99 @@
-import matplotlib
-# matplotlib.use('Agg')
-import numpy as np  
-import pylab as plt 
-import skimage.io as skio 
-# from unets import att_unet
-# from keras.optimizers import Adam
-from skimage.exposure import rescale_intensity
-from skimage.filters import threshold_otsu
-from skimage.filters import gaussian
-# from dipy.denoise.patch2self import patch2self
-from skimage.filters import gaussian 
+# ---------------- Core Python Libraries ---------------- #
+import os
+import re
 import glob
-import os 
-from scipy.ndimage import zoom
-import scipy.io as spio 
-from tqdm import tqdm 
-from skimage.exposure import equalize_hist
-import scipy.ndimage as ndimage
-import skimage.exposure as skexposure
-import skimage.filters as skfilters
-import skimage.morphology as skmorph
-import skimage.segmentation as sksegmentation 
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+from numba import njit
+
+# ---------------- Visualization ---------------- #
+import matplotlib
+# matplotlib.use('Agg')  # Uncomment if running without GUI backend (e.g., on a server)
+import matplotlib.pyplot as plt
+from matplotlib import cm, colors
+import matplotlib.patches as patches
+from mpl_toolkits.mplot3d import Axes3D
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+from matplotlib.colors import Normalize
+from matplotlib.colors import ListedColormap
+
+# ---------------- Scikit-Image ---------------- #
+from skimage import (
+    io,
+    exposure,
+    filters,
+    morphology,
+    segmentation,
+    measure,
+    feature,
+    img_as_ubyte,
+    data
+)
+from skimage.io import imread
+from skimage.exposure import rescale_intensity, equalize_hist
+from skimage.filters import threshold_otsu, gaussian
+from skimage.morphology import (
+    binary_erosion, remove_small_objects, disk, white_tophat, black_tophat, ball
+)
+from skimage.segmentation import watershed
+from skimage.feature import peak_local_max
 from skimage.measure import mesh_surface_area
+
+# ---------------- TIFF & Image I/O ---------------- #
 import tifffile as tiff
+from tifffile import imread
+
+# ---------------- SciPy ---------------- #
+import scipy.io as spio
+import scipy.ndimage as ndi
+from scipy.ndimage import zoom
+from scipy.stats import gaussian_kde
+from scipy.spatial import KDTree
+from scipy.spatial import distance_matrix
+from scipy.spatial.distance import cdist
+from sklearn.cluster import KMeans
+
+
+
+# ---------------- ML & Dimensionality Reduction ---------------- #
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.metrics import adjusted_rand_score, adjusted_mutual_info_score
+from sklearn.datasets import fetch_openml
+import sklearn.cluster as cluster
+import umap
+import hdbscan
+
+# ---------------- Image Tools: pyclesperanto ---------------- #
+import pyclesperanto_prototype as cle
+from pyclesperanto_prototype import imshow
+
+# ---------------- Stardist (Optional) ---------------- #
+# from stardist import fill_label_holes, relabel_image_stardist, random_label_cmap
+# from stardist.matching import matching_dataset
+
+# ---------------- CSBDeep Utils ---------------- #
+from csbdeep.utils import Path, download_and_extract_zip_file
+
+# ---------------- unwrap3D Library ---------------- #
 import unwrap3D.Visualisation.colors as vol_colors
-import unwrap3D.Segmentation.segmentation as segmentation 
+import unwrap3D.Segmentation.segmentation as segmentation
 import unwrap3D.Utility_Functions.file_io as fio
 import unwrap3D.Image_Functions.image as image_fn
 import unwrap3D.Mesh.meshtools as meshtools
 import unwrap3D.Parameters.params as params
 import unwrap3D.Geometry.geometry as geometry
 import unwrap3D.Unzipping.unzip as uzip
-import unwrap3D.Registration.registration as registration 
-import pandas as pd
-import igl
-from matplotlib import cm
-from skimage import io, img_as_ubyte
+import unwrap3D.Registration.registration as registration
 import unwrap3D.Analysis_Functions.topography as topo_tools
-import skimage.filters as skfilters
-import skimage.morphology as skmorph
-import skimage.segmentation as sksegmentation 
-import igl
+
+# ---------------- Excel ---------------- #
 import openpyxl as px
-import trimesh
-import skimage.measure as skmeasure 
-import pandas as pd
-from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-import matplotlib.pyplot as plt
 
-from tqdm import tqdm 
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.preprocessing import StandardScaler
-import umap
-
-import hdbscan
-import sklearn.cluster as cluster
-from sklearn.metrics import adjusted_rand_score, adjusted_mutual_info_score
-from sklearn.datasets import fetch_openml
-from sklearn.decomposition import PCA
-import re
-from scipy.stats import gaussian_kde
-from mpl_toolkits.mplot3d import Axes3D
-
-import os
-import numpy as np
-import skimage.io as skio
-import skimage.filters as skfilters
-import skimage.morphology as skmorph
-import skimage.measure as skmeasure
-import scipy.ndimage as ndi
-from skimage.segmentation import watershed
-from skimage.feature import peak_local_max
-from skimage.morphology import binary_erosion, remove_small_objects, disk
-
-from skimage import measure, io
-import pandas as pd
-
-from glob import glob
-from tqdm import tqdm
-from tifffile import imread
-from csbdeep.utils import Path, download_and_extract_zip_file
-
-# from stardist import fill_label_holes, relabel_image_stardist, random_label_cmap
-# from stardist.matching import matching_dataset
-
-from skimage.io import imread
-from pyclesperanto_prototype import imshow
-import pyclesperanto_prototype as cle
-import matplotlib.pyplot as plt
-from numba import njit
-from skimage.morphology import white_tophat, black_tophat, ball
-
-import matplotlib.patches as patches
-from matplotlib import cm, colors
-from mpl_toolkits.mplot3d import Axes3D
-
-import numpy as np
+import gc
 import tracemalloc
-from scipy.spatial import KDTree
-from matplotlib.colors import Normalize
 
-
-# Prepare data and apply histogram equalization
-
-from skimage.data import cells3d
 def remove_large_objects(ar, min_size=64, connectivity=1, *, out=None):
     if out is None:
             out = ar.copy()
@@ -183,8 +173,6 @@ def label_to_color(segmented, label_colors):
 
     return colored_image
 
-from matplotlib.colors import ListedColormap
-            
 def random_colormap(n_labels, seed=None):
     if seed is not None:
         np.random.seed(seed)
@@ -248,7 +236,6 @@ def mean_contour_intensity(regionmask, intensity_image, radius=1):
     contour_mask = dilated_mask & ~regionmask
     return intensity_image[contour_mask].mean()
 
-from scipy.spatial.distance import cdist
 
 # def compute_distances_with_overlap(source_df, target_df, source_channel, target_channel):
 #     # Extract and scale centroid coordinates
@@ -285,8 +272,6 @@ def cross_g_function(source_positions, target_positions, radii):
     
     return g_values
 
-import numpy as np
-from scipy.spatial import KDTree
 
 # def cross_g_function(source_positions, target_positions, radii, area):
 #     """
@@ -360,9 +345,6 @@ def monte_carlo_simulation(source_positions, target_positions, radii, area, num_
 
 pixel_x = 0.325  # µm per pixel
 pixel_y = 0.325  # µm per pixel
-
-from scipy.spatial import distance_matrix
-import gc
 
 ###### Load and produce dilation of segmented nuclei for measuring signal around edge vs. centre to identify marker associated to a given nuclei #####################
 
